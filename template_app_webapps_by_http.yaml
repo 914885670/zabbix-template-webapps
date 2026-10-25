@@ -1,0 +1,121 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: a571c0d144b14fd4a87a9d9b2aa9fcd6
+      name: Templates/Applications
+  templates:
+    - uuid: 36a5c7fcc322419fbbe638a7badf4931
+      template: 'Template App WebApps by HTTP'
+      name: 'Web Apps by HTTP'
+      description: |
+        Monitors a list of web applications running on the same host, using plain HTTP(S).
+
+        For every app in the {$WEBAPP.LIST} macro two items are created by LLD:
+          - reachability: the request must return a status code inside {$WEBAPP.STATUS_CODES}
+          - content: a regexp ({$WEBAPP.TITLE.REGEXP}) must capture something (by default the <title>)
+
+        Both are polled by HTTP agent items, so no agent is required on the monitored host.
+        Adding or removing an app only means editing one macro on the host.
+
+        Requirement: the script `externalscripts/webapp.discovery` must exist on the
+        Zabbix server (or the proxy that polls the host).
+      groups:
+        - name: Templates/Applications
+      discovery_rules:
+        - uuid: 282a1391e0a747d5b3311245e320c75f
+          name: 'Web app list discovery'
+          type: EXTERNAL
+          key: 'webapp.discovery[{$WEBAPP.LIST},{$WEBAPP.PATH}]'
+          delay: 10m
+          lifetime: 3d
+          description: 'Runs externalscripts/webapp.discovery, which turns {$WEBAPP.LIST} into LLD JSON.'
+          item_prototypes:
+            - uuid: 0f418b3ad5d140abb9a04e5a2cf77b60
+              name: 'Page content {#NAME}'
+              type: HTTP_AGENT
+              key: 'webapp.page[{#NAME}]'
+              delay: '{$WEBAPP.DELAY}'
+              value_type: TEXT
+              trends: '0'
+              description: 'REGSUB keeps capture group 1 of {$WEBAPP.TITLE.REGEXP} (the <title> by default). No value = port answers but the page does not render.'
+              preprocessing:
+                - type: REGEX
+                  parameters:
+                    - '{$WEBAPP.TITLE.REGEXP}'
+                    - \1
+              timeout: '{$WEBAPP.TIMEOUT}'
+              url: '{$WEBAPP.SCHEME}://{HOST.IP}:{#PORT}{#PATH}'
+              status_codes: '{$WEBAPP.STATUS_CODES}'
+              tags:
+                - tag: component
+                  value: webapp
+                - tag: app
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: 59780447290542678fd9368a5cec68f1
+                  expression: 'nodata(/Template App WebApps by HTTP/webapp.page[{#NAME}],{$WEBAPP.NODATA.PERIOD})=1'
+                  name: '{#NAME}: page content check failed'
+                  priority: HIGH
+                  description: 'The endpoint answers but {$WEBAPP.TITLE.REGEXP} captured nothing: app hung, rendering broken, or the port is taken by another process.'
+                  tags:
+                    - tag: component
+                      value: webapp
+                    - tag: app
+                      value: '{#NAME}'
+            - uuid: 43851058e3f04f2cbe3c7b51fb068de6
+              name: 'HTTP reachability {#NAME}'
+              type: HTTP_AGENT
+              key: 'webapp.reach[{#NAME}]'
+              delay: '{$WEBAPP.DELAY}'
+              value_type: TEXT
+              trends: '0'
+              description: 'The status code must be inside {$WEBAPP.STATUS_CODES}; otherwise the item becomes unsupported and the nodata trigger fires.'
+              timeout: '{$WEBAPP.TIMEOUT}'
+              url: '{$WEBAPP.SCHEME}://{HOST.IP}:{#PORT}{#PATH}'
+              status_codes: '{$WEBAPP.STATUS_CODES}'
+              retrieve_mode: HEADERS
+              tags:
+                - tag: component
+                  value: webapp
+                - tag: app
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: 456a24eb65e3409daf0048d1bdeb8cc4
+                  expression: 'nodata(/Template App WebApps by HTTP/webapp.reach[{#NAME}],{$WEBAPP.NODATA.PERIOD})=1'
+                  name: '{#NAME}: HTTP unreachable or unexpected status code'
+                  priority: HIGH
+                  description: 'No response inside {$WEBAPP.STATUS_CODES} for {$WEBAPP.NODATA.PERIOD}: process down, port refused, timeout or non-2xx.'
+                  tags:
+                    - tag: component
+                      value: webapp
+                    - tag: app
+                      value: '{#NAME}'
+      tags:
+        - tag: class
+          value: application
+        - tag: component
+          value: webapp
+      macros:
+        - macro: '{$WEBAPP.DELAY}'
+          value: 60s
+          description: 'Polling interval for every discovered app.'
+        - macro: '{$WEBAPP.LIST}'
+          description: 'App list, comma separated, format name:port[:path]. Example: erp:3000,api:5000:/health. Empty = no items are created. Add or remove apps by editing this macro only.'
+        - macro: '{$WEBAPP.NODATA.PERIOD}'
+          value: 3m
+          description: 'How long without data before an app is considered down (nodata window).'
+        - macro: '{$WEBAPP.PATH}'
+          value: /
+          description: 'Default request path when the entry does not specify one.'
+        - macro: '{$WEBAPP.SCHEME}'
+          value: http
+          description: 'http or https. Note: {HOST.IP} only works inside the item URL field, not inside a user macro value.'
+        - macro: '{$WEBAPP.STATUS_CODES}'
+          value: 200-399
+          description: 'HTTP status code range treated as healthy. Anything else makes the item unsupported and raises the nodata trigger.'
+        - macro: '{$WEBAPP.TIMEOUT}'
+          value: 10s
+          description: 'Timeout of a single request.'
+        - macro: '{$WEBAPP.TITLE.REGEXP}'
+          value: '<title[^>]*>(.{1,90}?)</title>'
+          description: 'Content assertion regexp. Capture group 1 is what gets stored; change this macro to assert something else.'

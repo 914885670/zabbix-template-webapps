@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+scripts/webapp.discovery text eol=lf
+*.bat text eol=crlf

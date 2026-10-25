@@ -1,0 +1,61 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 xuuz
+# webapp.discovery - LLD data source for the "Web Apps by HTTP" template.
+#
+#   webapp.discovery[{$WEBAPP.LIST},{$WEBAPP.PATH}]
+#
+# Input  : a comma separated list "name:port[:path]" and a default path.
+# Output : Zabbix LLD JSON
+#          {"data":[{"{#NAME}":"erp","{#PORT}":"3000","{#PATH}":"/"}, ...]}
+#
+# Examples:
+#   erp:3000,api:5000:/health,admin:8443:/login
+#   -> erp on :3000/, api on :5000/health, admin on :8443/login
+#
+# Notes:
+#   * App names must not contain ':' or ','.
+#   * Empty or blank entries are ignored, so trailing commas are harmless.
+#   * The script only produces the discovery payload; it never touches the app.
+
+list="${1:-}"
+default_path="${2:-/}"
+
+out=""
+IFS=',' read -ra entries <<< "$list"
+for e in "${entries[@]}"; do
+  # trim leading/trailing blanks
+  e="$(echo "$e" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  [ -z "$e" ] && continue
+
+  name="${e%%:*}"
+  rest="${e#*:}"
+  port="${rest%%:*}"
+  if [ "$rest" = "$port" ]; then
+    path="$default_path"
+  else
+    path="${rest#*:}"
+  fi
+
+  # normalise path: empty or missing slash -> "/..."
+  case "$path" in
+    ""|" ") path="/" ;;
+  esac
+  case "$path" in
+    /*) ;;
+    *) path="/$path" ;;
+  esac
+
+  # skip entries without name or port
+  [ -z "$name" ] && continue
+  [ -z "$port" ] && continue
+
+  item="$(printf '{"{#NAME}":"%s","{#PORT}":"%s","{#PATH}":"%s"}' "$name" "$port" "$path")"
+  if [ -n "$out" ]; then
+    out="$out,$item"
+  else
+    out="$item"
+  fi
+done
+
+printf '{"data":[%s]}\n' "$out"
