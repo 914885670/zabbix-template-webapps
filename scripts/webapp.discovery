@@ -3,41 +3,86 @@
 # Copyright (c) 2026 xuuz
 # webapp.discovery - LLD data source for the "Web Apps by HTTP" template.
 #
-#   webapp.discovery[{$WEBAPP.LIST},{$WEBAPP.PATH}]
+#   webapp.discovery[{$WEBAPP.LIST},{$WEBAPP.PATH},{HOST.IP},{$WEBAPP.SCHEME}]
 #
-# Input  : a comma separated list "name:port[:path]" and a default path.
-# Output : Zabbix LLD JSON
-#          {"data":[{"{#NAME}":"erp","{#PORT}":"3000","{#PATH}":"/"}, ...]}
+# Input:
+#   1. comma separated app list. Two entry formats are supported:
+#        name:port[:path]          target host = argument 3 (normally {HOST.IP})
+#        name|host:port[:path]     explicit target host or domain
+#   2. default path
+#   3. default host (normally {HOST.IP})
+#   4. scheme, used only to pick the default port (http -> 80, https -> 443)
+#
+# Output: Zabbix LLD JSON
+#   {"data":[{"{#NAME}":"erp","{#HOST}":"10.0.0.10","{#PORT}":"3000","{#PATH}":"/"}, ...]}
 #
 # Examples:
-#   erp:3000,api:5000:/health,admin:8443:/login
-#   -> erp on :3000/, api on :5000/health, admin on :8443/login
+#   erp:3000,api:5000:/health
+#   erp|erp.example.com:443:/,api|api.internal:8080:/health
 #
 # Notes:
-#   * App names must not contain ':' or ','.
+#   * App names must not contain ':', '|' or ','.
 #   * Empty or blank entries are ignored, so trailing commas are harmless.
 #   * The script only produces the discovery payload; it never touches the app.
 
 list="${1:-}"
 default_path="${2:-/}"
+default_host="${3:-}"
+scheme="${4:-http}"
+
+if [ "$scheme" = "https" ]; then
+  default_port="443"
+else
+  default_port="80"
+fi
+
+trim() {
+  echo "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
 
 out=""
 IFS=',' read -ra entries <<< "$list"
 for e in "${entries[@]}"; do
-  # trim leading/trailing blanks
-  e="$(echo "$e" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  e="$(trim "$e")"
   [ -z "$e" ] && continue
 
-  name="${e%%:*}"
-  rest="${e#*:}"
-  port="${rest%%:*}"
-  if [ "$rest" = "$port" ]; then
-    path="$default_path"
+  name=""
+  host=""
+  port=""
+  path=""
+
+  if [[ "$e" == *"|"* ]]; then
+    name="$(trim "${e%%|*}")"
+    target="$(trim "${e#*|}")"
+    if [[ "$target" == *":"* ]]; then
+      host="${target%%:*}"
+      rest="${target#*:}"
+      port="${rest%%:*}"
+      if [ "$rest" = "$port" ]; then
+        path="$default_path"
+      else
+        path="${rest#*:}"
+      fi
+    else
+      host="$target"
+      path="$default_path"
+    fi
   else
-    path="${rest#*:}"
+    name="${e%%:*}"
+    rest="${e#*:}"
+    port="${rest%%:*}"
+    if [ "$rest" = "$port" ]; then
+      path="$default_path"
+    else
+      path="${rest#*:}"
+    fi
+    host="$default_host"
   fi
 
-  # normalise path: empty or missing slash -> "/..."
+  [ -z "$name" ] && continue
+  [ -z "$host" ] && host="$default_host"
+  [ -z "$port" ] && port="$default_port"
+
   case "$path" in
     ""|" ") path="/" ;;
   esac
@@ -46,11 +91,7 @@ for e in "${entries[@]}"; do
     *) path="/$path" ;;
   esac
 
-  # skip entries without name or port
-  [ -z "$name" ] && continue
-  [ -z "$port" ] && continue
-
-  item="$(printf '{"{#NAME}":"%s","{#PORT}":"%s","{#PATH}":"%s"}' "$name" "$port" "$path")"
+  item="$(printf '{"{#NAME}":"%s","{#HOST}":"%s","{#PORT}":"%s","{#PATH}":"%s"}' "$name" "$host" "$port" "$path")"
   if [ -n "$out" ]; then
     out="$out,$item"
   else

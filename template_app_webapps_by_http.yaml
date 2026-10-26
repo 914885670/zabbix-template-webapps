@@ -17,6 +17,10 @@ zabbix_export:
         Both are polled by HTTP agent items, so no agent is required on the monitored host.
         Adding or removing an app only means editing one macro on the host.
 
+        Two list entry formats are supported:
+          name:port[:path]        target host is {HOST.IP}
+          name|host:port[:path]   explicit host or domain, e.g. behind a reverse proxy
+
         Requirement: the script `externalscripts/webapp.discovery` must exist on the
         Zabbix server (or the proxy that polls the host).
       groups:
@@ -25,7 +29,7 @@ zabbix_export:
         - uuid: 282a1391e0a747d5b3311245e320c75f
           name: 'Web app list discovery'
           type: EXTERNAL
-          key: 'webapp.discovery[{$WEBAPP.LIST},{$WEBAPP.PATH}]'
+          key: 'webapp.discovery[{$WEBAPP.LIST},{$WEBAPP.PATH},{HOST.IP},{$WEBAPP.SCHEME}]'
           delay: 10m
           lifetime: 3d
           description: 'Runs externalscripts/webapp.discovery, which turns {$WEBAPP.LIST} into LLD JSON.'
@@ -44,7 +48,7 @@ zabbix_export:
                     - '{$WEBAPP.TITLE.REGEXP}'
                     - \1
               timeout: '{$WEBAPP.TIMEOUT}'
-              url: '{$WEBAPP.SCHEME}://{HOST.IP}:{#PORT}{#PATH}'
+              url: '{$WEBAPP.SCHEME}://{#HOST}:{#PORT}{#PATH}'
               status_codes: '{$WEBAPP.STATUS_CODES}'
               tags:
                 - tag: component
@@ -71,7 +75,7 @@ zabbix_export:
               trends: '0'
               description: 'The status code must be inside {$WEBAPP.STATUS_CODES}; otherwise the item becomes unsupported and the nodata trigger fires.'
               timeout: '{$WEBAPP.TIMEOUT}'
-              url: '{$WEBAPP.SCHEME}://{HOST.IP}:{#PORT}{#PATH}'
+              url: '{$WEBAPP.SCHEME}://{#HOST}:{#PORT}{#PATH}'
               status_codes: '{$WEBAPP.STATUS_CODES}'
               retrieve_mode: HEADERS
               tags:
@@ -100,7 +104,7 @@ zabbix_export:
           value: 60s
           description: 'Polling interval for every discovered app.'
         - macro: '{$WEBAPP.LIST}'
-          description: 'App list, comma separated, format name:port[:path]. Example: erp:3000,api:5000:/health. Empty = no items are created. Add or remove apps by editing this macro only.'
+          description: 'App list, comma separated. Format 1: name:port[:path] (target is {HOST.IP}). Format 2: name|host:port[:path] (explicit host/domain). Example: erp:3000,api|api.example.com:443:/health. Empty = no items are created.'
         - macro: '{$WEBAPP.NODATA.PERIOD}'
           value: 3m
           description: 'How long without data before an app is considered down (nodata window).'
@@ -109,7 +113,7 @@ zabbix_export:
           description: 'Default request path when the entry does not specify one.'
         - macro: '{$WEBAPP.SCHEME}'
           value: http
-          description: 'http or https. Note: {HOST.IP} only works inside the item URL field, not inside a user macro value.'
+          description: 'http or https. Also selects the default port for entries without an explicit port (http -> 80, https -> 443).'
         - macro: '{$WEBAPP.STATUS_CODES}'
           value: 200-399
           description: 'HTTP status code range treated as healthy. Anything else makes the item unsupported and raises the nodata trigger.'

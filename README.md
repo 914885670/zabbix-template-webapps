@@ -2,7 +2,7 @@
 
 一台主机上跑多个 Web 应用时，用一份清单宏管理探测：每个应用自动生成“可达性 + 页面内容”两个监控项和两条告警，增删应用只改一行宏，不用复制模板。
 
-适用于任何返回 HTTP 的服务（Next.js、Spring Boot、Nginx 静态站、后台管理页都行），**不需要在被监控主机上装 agent**，探测由 Zabbix server/proxy 直接发起。
+适用于任何返回 HTTP 的服务（Next.js、Spring Boot、Nginx 静态站、后台管理页都行），**不需要在被监控主机上装 agent**，探测由 Zabbix server/proxy 直接发起。清单条目既可以直连端口（`erp:3000`），也可以指定域名/主机（`erp|erp.example.com:443:/`），后者适合应用只绑 127.0.0.1、由 nginx 反代的场景。
 
 ## 监控什么
 
@@ -35,20 +35,24 @@
 
 3. 把模板 `Template App WebApps by HTTP` 链接到目标主机。
 
-4. 在主机上新增宏 `{$WEBAPP.LIST}`，格式 `名称:端口[:路径]`，逗号分隔：
+4. 在主机上新增宏 `{$WEBAPP.LIST}`，逗号分隔，支持两种条目：
 
    ```
+   # 直连端口：目标主机取 {HOST.IP}
    erp:3000,api:5000:/health,admin:8443:/login
+
+   # 指定域名/主机：适合应用只绑 127.0.0.1、由 nginx 按域名反向代理
+   erp|erp.example.com:443:/,api|api.example.com:443:/health
    ```
 
-   保存后等一轮发现（默认 10 分钟，临时可把发现规则的间隔改短），项和触发器会自动出现。
+   第二种写法里协议由 `{$WEBAPP.SCHEME}` 决定；条目不写端口时，https 默认 443、http 默认 80。保存后等一轮发现（默认 10 分钟，临时可把发现规则的间隔改短），项和触发器会自动出现。
 
 ## 宏
 
 | 宏 | 默认值 | 说明 |
 |---|---|---|
-| `{$WEBAPP.LIST}` | 空 | 应用清单。留空则不生成任何项 |
-| `{$WEBAPP.SCHEME}` | `http` | 改成 `https` 时注意证书校验，见下面的“已知限制” |
+| `{$WEBAPP.LIST}` | 空 | 应用清单。两种格式：`名称:端口[:路径]` 或 `名称|主机:端口[:路径]`；留空则不生成任何项 |
+| `{$WEBAPP.SCHEME}` | `http` | `http` 或 `https`；也决定新格式不写端口时的默认端口（https=443、http=80） |
 | `{$WEBAPP.PATH}` | `/` | 条目里没写路径时的默认路径 |
 | `{$WEBAPP.DELAY}` | `60s` | 每个应用的探测间隔 |
 | `{$WEBAPP.TIMEOUT}` | `10s` | 单次请求超时 |
@@ -59,8 +63,9 @@
 ## 发现脚本单独测
 
 ```bash
-/usr/lib/zabbix/externalscripts/webapp.discovery 'erp:3000,api:5000:/health' '/'
-# {"data":[{"{#NAME}":"erp","{#PORT}":"3000","{#PATH}":"/"},{"{#NAME}":"api","{#PORT}":"5000","{#PATH}":"/health"}]}
+# 参数：清单 / 默认路径 / 默认主机(旧写法用) / 协议(决定缺省端口)
+/usr/lib/zabbix/externalscripts/webapp.discovery 'erp:3000,api|api.example.com:443:/health' '/' '10.0.0.10' 'https'
+# {"data":[{"{#NAME}":"erp","{#HOST}":"10.0.0.10","{#PORT}":"3000","{#PATH}":"/"},{"{#NAME}":"api","{#HOST}":"api.example.com","{#PORT}":"443","{#PATH}":"/health"}]}
 ```
 
 ## 已知限制（都是实际踩过的）
@@ -68,11 +73,16 @@
 - **外部脚本的位置**：外部检查类型由 server/proxy 执行，脚本必须在那台机器的 `externalscripts` 目录里，放被监控端无效。
 - **key 必须等于脚本文件名**：这里发现规则的 key 是 `webapp.discovery[...]`，所以脚本文件必须叫 `webapp.discovery`，改名后要同步改 key。
 - **超时**：Zabbix 的默认超时（3 秒）会截断慢请求。模板已经给项单独设了 `{$WEBAPP.TIMEOUT}`，如果仍然报 timeout，先确认 server 配置里的 `Timeout` 没有被压得太小。
-- **`{HOST.IP}` 只能在项的 URL 里用**，写进用户宏的值不会展开。所以多 IP 的主机要确认主接口地址就是应用监听的地址；用域名访问的场景建议把模板里 URL 的 `{HOST.IP}` 改成 `{HOST.NAME}` 或 `{HOST.CONN}`。
+- **目标主机怎么来的**：旧写法 `名称:端口` 的目标固定为 `{HOST.IP}`，这个值由发现规则 key 的第 3 个参数传入（实测 `{HOST.IP}` 在外部检查 key 里会展开）。如果应用只绑回环、由 nginx 按域名反代，用新写法 `名称|域名:端口:路径`，不要把 `{HOST.IP}` 写进用户宏的值。
 - **https 默认不校验证书**：模板里 `verify_peer`/`verify_host` 是 0，内部自签环境可以直接用。要校验就打开这两个字段，并确保 CA 在系统库里。
 - **内容断言依赖页面里有可提取的内容**：纯 API（返回 JSON）不适合用 `webapp.page`，可以只留可达性项，或者把 `{$WEBAPP.TITLE.REGEXP}` 改成能匹配 JSON 字段的正则。
 - **LLD 清理有延迟**：从清单里删掉一个应用后，旧项会在“保留丢失资源”期（3 天）后才消失，这期间它的触发器可能还在。
 - 应用名里不能带 `:` 和 `,`，否则清单解析会错位。
+
+## 变更记录
+
+- **v1.1.0（2026-10-26）**：清单新增 `名称|主机:端口[:路径]` 写法，支持应用绑回环、由 nginx 按域名反代的场景；发现脚本新增 `{#HOST}`，LLD key 增加 `{HOST.IP}` 与 `{$WEBAPP.SCHEME}` 两个参数；旧的 `名称:端口[:路径]` 写法保持兼容。
+- **v1.0.0（2026-10-25）**：首版。
 
 ## 许可证
 
