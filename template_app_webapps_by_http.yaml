@@ -73,7 +73,12 @@ zabbix_export:
               delay: '{$WEBAPP.DELAY}'
               value_type: TEXT
               trends: '0'
-              description: 'The status code must be inside {$WEBAPP.STATUS_CODES}; otherwise the item becomes unsupported and the nodata trigger fires.'
+              description: 'The status code must be inside {$WEBAPP.STATUS_CODES}; otherwise the item becomes unsupported and the nodata trigger fires. Only the last status line is stored (so a redirect chain reports the effective code).'
+              preprocessing:
+                - type: REGEX
+                  parameters:
+                    - '[\s\S]*(HTTP/[0-9.]+ [0-9]{3})[\s\S]*'
+                    - \1
               timeout: '{$WEBAPP.TIMEOUT}'
               url: '{$WEBAPP.SCHEME}://{#HOST}:{#PORT}{#PATH}'
               status_codes: '{$WEBAPP.STATUS_CODES}'
